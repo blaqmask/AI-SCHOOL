@@ -1,0 +1,6 @@
+{
+  "name": "FUNDAI — AI Academy",
+  "description": "Grade 4–12 AI Literacy & Innovation Learning Ecosystem with personalized pathways, hands-on interactive AI labs, prompt engineering coach, and teacher dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
