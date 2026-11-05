@@ -54,7 +54,11 @@ export default function App() {
       const savedToken = localStorage.getItem('fundai_session_token');
       const savedUser = localStorage.getItem('fundai_user');
       if (savedToken && savedUser) {
-        return JSON.parse(savedUser);
+        const cachedUser = JSON.parse(savedUser);
+        if (cachedUser && typeof cachedUser === 'object') {
+          delete cachedUser.sessionToken;
+        }
+        return cachedUser;
       }
       return null;
     } catch {
