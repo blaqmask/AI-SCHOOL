@@ -14,9 +14,15 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
-const ai = new GoogleGenAI();
+function getAIClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured.');
+  }
+  return new GoogleGenAI({ apiKey });
+}
 
 async function callGeminiSafe(
   systemInstruction: string,
@@ -27,7 +33,7 @@ async function callGeminiSafe(
     return fallbackText;
   }
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: promptText,
       config: {
@@ -159,11 +165,14 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'An account with this email address already exists. Please log in.' });
   }
 
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  if (typeof password !== 'string' || password.length < 10 || password.length > 128) {
+    return res.status(400).json({ error: 'Password must be between 10 and 128 characters.' });
   }
 
   const numGrade = Number(grade);
+  if (!Number.isInteger(numGrade) || numGrade < 4 || numGrade > 12) {
+    return res.status(400).json({ error: 'Grade must be a whole number from 4 to 12.' });
+  }
   // POPIA & Child Safety Requirement: Under Grade 8 (< 8) requires parent/guardian contact
   if (numGrade < 8) {
     if (!parentGuardianEmail || !emailRegex.test(parentGuardianEmail.trim())) {
@@ -509,7 +518,7 @@ Return a JSON object with:
   }
 
   try {
-    const raw = await ai.models.generateContent({
+    const raw = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: userQuery,
       config: {
@@ -564,7 +573,7 @@ Return JSON:
       res.json(fallback);
       return;
     }
-    const response = await ai.models.generateContent({
+    const response = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: `Statement: "${statement}". Context: "${context}"`,
       config: {
