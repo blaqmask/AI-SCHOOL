@@ -116,6 +116,15 @@ function loadUsers(): Record<string, StoredUser> {
     console.warn('Could not load users file, initializing new store:', err);
   }
 
+  // Remove accounts created by the old hard-coded demo seeding logic.
+  // Keep every other account intact.
+  if (existingUsers['sipho@fundai.ac.za']?.id === 'usr-demo-01') {
+    delete existingUsers['sipho@fundai.ac.za'];
+  }
+  if (existingUsers['nthabiso019@gmail.com']?.id === 'usr-master-admin-01') {
+    delete existingUsers['nthabiso019@gmail.com'];
+  }
+
   saveUsers(existingUsers);
   return existingUsers;
 }
