@@ -38,38 +38,6 @@ import { AnimeAvatarStudioModal } from './components/AnimeAvatarStudioModal';
 import { DEFAULT_ANIME_AVATAR } from './components/AnimeAvatarRenderer';
 import { Bot, Sparkles, BookOpen, Wifi, WifiOff } from 'lucide-react';
 
-const INITIAL_DEMO_USER: UserAccount = {
-  id: 'usr-demo-sipho',
-  fullName: 'Sipho Ndlovu',
-  email: 'sipho@fundai.ac.za',
-  role: 'learner',
-  grade: 7,
-  learnerNumber: 'LRN-2026-7041',
-  isGradeLocked: true,
-  gradeLockDate: '2026-01-14',
-  gradeLockExpiryDate: '2026-12-10',
-  academicTerm: 1,
-  dailyMinutesTarget: 45,
-  dailyMinutesCompleted: 28,
-  lastStudyDate: '2026-02-15',
-  studyStreakDays: 14,
-  schoolName: 'Johannesburg STEM Academy',
-  province: 'Gauteng',
-  preferredLanguage: 'zu',
-  parentGuardianEmail: 'parent.ndlovu@gmail.com',
-  parentGuardianPhone: '+27 82 555 1234',
-  avatar: DEFAULT_ANIME_AVATAR,
-  earnedBadgeIds: [
-    'badge-prompt-master',
-    'badge-data-detective',
-    'badge-ubuntu-ethics',
-    'badge-multilingual-hero',
-  ],
-  totalXP: 1450,
-  completedModuleIds: ['m01', 'm02'],
-  createdAt: '2026-02-15T08:00:00.000Z',
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('curriculum');
   const [currentGrade, setCurrentGrade] = useState<GradeLevel>(7);
@@ -87,17 +55,17 @@ export default function App() {
       if (savedUser) {
         return JSON.parse(savedUser);
       }
-      return INITIAL_DEMO_USER;
+      return null;
     } catch {
-      return INITIAL_DEMO_USER;
+      return null;
     }
   });
 
   const [sessionToken, setSessionToken] = useState<string>(() => {
     try {
-      return localStorage.getItem('fundai_session_token') || 'token-demo-sipho';
+      return localStorage.getItem('fundai_session_token') || '';
     } catch {
-      return 'token-demo-sipho';
+      return '';
     }
   });
 
@@ -213,8 +181,11 @@ export default function App() {
     try {
       await fetch('/api/user/study-time', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, minutesAdded: minutes }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ minutesAdded: minutes }),
       });
     } catch (err) {
       // Offline fallback
