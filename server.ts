@@ -279,8 +279,8 @@ app.post('/api/user/study-time', (req: Request, res: Response) => {
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { email, password, rememberMe = true } = req.body;
 
-  const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail || !password) {
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!cleanEmail || typeof password !== 'string' || !password) {
     return res.status(400).json({ error: 'Please enter both your email address and password.' });
   }
 
