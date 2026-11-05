@@ -72,6 +72,7 @@ interface StoredUser {
   createdAt: string;
   sessionToken?: string;
   resetCode?: string;
+  passwordHashIterations?: number;
 }
 
 // Initial demo user
@@ -88,8 +89,14 @@ const DEFAULT_AVATAR = {
   auraEffect: 'azure-cyber',
 };
 
-function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+const PASSWORD_HASH_ITERATIONS = 210_000;
+
+function hashPassword(
+  password: string,
+  salt: string,
+  iterations = PASSWORD_HASH_ITERATIONS
+): string {
+  return crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex');
 }
 
 function loadUsers(): Record<string, StoredUser> {
@@ -101,85 +108,6 @@ function loadUsers(): Record<string, StoredUser> {
     }
   } catch (err) {
     console.warn('Could not load users file, initializing new store:', err);
-  }
-
-  // Seed demo user: Sipho Ndlovu
-  const demoSalt = crypto.randomBytes(16).toString('hex');
-  const demoHash = hashPassword('Fundai2026!', demoSalt);
-
-  // Seed Master Admin: nthabiso019@gmail.com
-  const adminSalt = crypto.randomBytes(16).toString('hex');
-  const adminHash = hashPassword('FundaiMaster2026!', adminSalt);
-
-  if (!existingUsers['sipho@fundai.ac.za']) {
-    existingUsers['sipho@fundai.ac.za'] = {
-      id: 'usr-demo-01',
-      fullName: 'Sipho Ndlovu',
-      email: 'sipho@fundai.ac.za',
-      passwordHash: demoHash,
-      salt: demoSalt,
-      grade: 7,
-      role: 'learner',
-      learnerNumber: 'LRN-2026-7041',
-      isGradeLocked: true,
-      gradeLockDate: '2026-01-14',
-      gradeLockExpiryDate: '2026-12-10',
-      academicTerm: 1,
-      dailyMinutesTarget: 45,
-      dailyMinutesCompleted: 38,
-      studyStreakDays: 14,
-      schoolName: 'Johannesburg STEM Academy',
-      province: 'Gauteng',
-      preferredLanguage: 'zu',
-      parentGuardianEmail: 'parent.ndlovu@gmail.com',
-      parentGuardianPhone: '+27 82 555 1234',
-      avatar: DEFAULT_AVATAR,
-      earnedBadgeIds: [
-        'badge-prompt-master',
-        'badge-data-detective',
-        'badge-neural-architect',
-        'badge-fact-checker',
-        'badge-ubuntu-ethics',
-        'badge-multilingual-hero',
-      ],
-      totalXP: 2100,
-      completedModuleIds: ['m01', 'm02', 'm03', 'm07', 'm11', 'm16'],
-      createdAt: '2026-10-01T08:00:00Z',
-      sessionToken: 'token-demo-sipho',
-    };
-  }
-
-  if (!existingUsers['nthabiso019@gmail.com']) {
-    existingUsers['nthabiso019@gmail.com'] = {
-      id: 'usr-master-admin-01',
-      fullName: 'Nthabiso (Master Admin)',
-      email: 'nthabiso019@gmail.com',
-      passwordHash: adminHash,
-      salt: adminSalt,
-      grade: 12,
-      role: 'master_admin',
-      learnerNumber: 'ADM-MASTER-001',
-      isGradeLocked: false,
-      gradeLockDate: '2026-01-01',
-      gradeLockExpiryDate: '2026-12-31',
-      academicTerm: 1,
-      dailyMinutesTarget: 45,
-      dailyMinutesCompleted: 45,
-      studyStreakDays: 45,
-      schoolName: 'FUNDAI Master Administration',
-      province: 'Gauteng',
-      preferredLanguage: 'en',
-      avatar: {
-        ...DEFAULT_AVATAR,
-        clothing: 'cyber-hoodie',
-        auraEffect: 'solar-gold',
-      },
-      earnedBadgeIds: ['badge-prompt-master', 'badge-data-detective', 'badge-neural-architect'],
-      totalXP: 9999,
-      completedModuleIds: ['m01', 'm02', 'm03'],
-      createdAt: '2026-01-01T00:00:00Z',
-      sessionToken: 'token-master-admin-nthabiso',
-    };
   }
 
   saveUsers(existingUsers);
@@ -256,6 +184,7 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     fullName: fullName.trim(),
     email: cleanEmail,
     passwordHash,
+    passwordHashIterations: PASSWORD_HASH_ITERATIONS,
     salt,
     grade: numGrade,
     role: 'learner',
@@ -294,15 +223,19 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
 
 // Update Daily Study Time Endpoint
 app.post('/api/user/study-time', (req: Request, res: Response) => {
-  const { email, minutesAdded = 1 } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-  const user = usersDb[cleanEmail];
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\\s+/i, '').trim();
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
+  const minutesAdded = Number(req.body.minutesAdded ?? 1);
 
   if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(401).json({ error: 'Not authenticated.' });
+  }
+  if (!Number.isFinite(minutesAdded) || minutesAdded <= 0 || minutesAdded > 240) {
+    return res.status(400).json({ error: 'Study time must be between 1 and 240 minutes.' });
   }
 
-  user.dailyMinutesCompleted = (user.dailyMinutesCompleted || 0) + Number(minutesAdded);
+  user.dailyMinutesCompleted = (user.dailyMinutesCompleted || 0) + minutesAdded;
   if (user.dailyMinutesCompleted >= user.dailyMinutesTarget && !user.earnedBadgeIds.includes('badge-prompt-master')) {
     user.totalXP += 100;
   }
@@ -329,9 +262,22 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'No account found with this email. Please check spelling or register.' });
   }
 
-  const inputHash = hashPassword(password, user.salt);
-  if (inputHash !== user.passwordHash) {
+  const storedIterations = user.passwordHashIterations ?? 1000;
+  const inputHash = hashPassword(password, user.salt, storedIterations);
+  const expectedHash = Buffer.from(user.passwordHash, 'hex');
+  const actualHash = Buffer.from(inputHash, 'hex');
+  if (
+    expectedHash.length !== actualHash.length ||
+    !crypto.timingSafeEqual(expectedHash, actualHash)
+  ) {
     return res.status(401).json({ error: 'Incorrect password. Please try again or use Forgot Password.' });
+  }
+
+  // Upgrade legacy password hashes after a successful login.
+  if (storedIterations < PASSWORD_HASH_ITERATIONS) {
+    user.salt = crypto.randomBytes(16).toString('hex');
+    user.passwordHash = hashPassword(password, user.salt);
+    user.passwordHashIterations = PASSWORD_HASH_ITERATIONS;
   }
 
   const sessionToken = crypto.randomBytes(32).toString('hex');
@@ -379,71 +325,28 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
-// Forgot Password Flow
-app.post('/api/auth/forgot-password', (req: Request, res: Response) => {
-  const { email } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-
-  const user = usersDb[cleanEmail];
-  if (!user) {
-    // For security, still return success message or simulated notice
-    return res.json({
-      success: true,
-      message: 'If an account exists with this email, a verification code has been dispatched.',
-      verificationCode: '829401', // Helpful for local/classroom prototype
-    });
-  }
-
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  user.resetCode = code;
-  saveUsers(usersDb);
-
-  res.json({
-    success: true,
-    message: `Verification code generated for ${user.fullName}. In this development preview, your reset code is: ${code}`,
-    verificationCode: code,
+// Password recovery is intentionally disabled until a verified email/SMS
+// delivery provider is configured. Never return reset codes from this API.
+app.post('/api/auth/forgot-password', (_req: Request, res: Response) => {
+  res.status(503).json({
+    success: false,
+    error: 'Password recovery is not configured yet. Please contact your school administrator.',
   });
 });
 
-// Reset Password Flow
-app.post('/api/auth/reset-password', (req: Request, res: Response) => {
-  const { email, code, newPassword } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-
-  if (!cleanEmail || !code || !newPassword) {
-    return res.status(400).json({ error: 'Please provide email, verification code, and new password.' });
-  }
-
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters.' });
-  }
-
-  const user = usersDb[cleanEmail];
-  if (!user || user.resetCode !== code.trim()) {
-    return res.status(400).json({ error: 'Invalid verification code or email. Please check and try again.' });
-  }
-
-  user.salt = crypto.randomBytes(16).toString('hex');
-  user.passwordHash = hashPassword(newPassword, user.salt);
-  delete user.resetCode;
-  saveUsers(usersDb);
-
-  res.json({ success: true, message: 'Your password has been successfully reset! You can now log in.' });
+app.post('/api/auth/reset-password', (_req: Request, res: Response) => {
+  res.status(503).json({
+    success: false,
+    error: 'Password recovery is not configured yet. Please contact your school administrator.',
+  });
 });
 
 // Update Anime Avatar Endpoint
 app.put('/api/user/avatar', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '').trim();
-  const { avatar, email } = req.body;
-
-  let user: StoredUser | undefined;
-  if (token) {
-    user = Object.values(usersDb).find((u) => u.sessionToken === token);
-  }
-  if (!user && email) {
-    user = usersDb[email.toLowerCase()];
-  }
+  const { avatar } = req.body;
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated or user not found.' });
@@ -459,15 +362,8 @@ app.put('/api/user/avatar', (req: Request, res: Response) => {
 app.post('/api/user/badges/unlock', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '').trim();
-  const { badgeId, xp = 250, email } = req.body;
-
-  let user: StoredUser | undefined;
-  if (token) {
-    user = Object.values(usersDb).find((u) => u.sessionToken === token);
-  }
-  if (!user && email) {
-    user = usersDb[email.toLowerCase()];
-  }
+  const { badgeId, xp = 250 } = req.body;
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated.' });
