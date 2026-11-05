@@ -125,6 +125,14 @@ function loadUsers(): Record<string, StoredUser> {
     delete existingUsers['nthabiso019@gmail.com'];
   }
 
+  // Sessions issued by the old build may have been exposed in the committed
+  // database. Invalidate legacy sessions once; successful login upgrades hashes.
+  for (const user of Object.values(existingUsers)) {
+    if (!user.passwordHashIterations) {
+      delete user.sessionToken;
+    }
+  }
+
   saveUsers(existingUsers);
   return existingUsers;
 }
