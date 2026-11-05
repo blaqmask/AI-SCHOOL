@@ -406,6 +406,10 @@ export default function App() {
         }}
         onLogout={handleLogout}
         onSelectRolePreview={(role) => {
+          if (!user || (user.role !== role && user.role !== 'master_admin')) {
+            setIsAuthModalOpen(true);
+            return;
+          }
           if (role === 'learner') setActiveTab('curriculum');
           if (role === 'teacher') setActiveTab('classroom');
           if (role === 'parent') setActiveTab('parent-portal');
@@ -550,43 +554,67 @@ export default function App() {
 
             {/* TAB 6: TEACHER CLASSROOM DASHBOARD */}
             {activeTab === 'classroom' && (
-              <TeacherDashboard
-                currentGrade={user?.grade || currentGrade}
-                teacherName="Mrs. N. Khumalo (HOD Science & Technology)"
-                assignedSubject="Grade 7 · Coding & Mathematics"
-              />
+              user && (user.role === 'teacher' || user.role === 'master_admin') ? (
+                <TeacherDashboard
+                  currentGrade={user.grade || currentGrade}
+                  teacherName={user.fullName}
+                  assignedSubject="Assigned school subjects"
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Teacher dashboard access is restricted. Sign in with an authorised teacher account.
+                </div>
+              )
             )}
 
             {/* TAB 7: PARENT & GUARDIAN PORTAL */}
             {activeTab === 'parent-portal' && (
-              <ParentDashboard
-                currentGrade={user?.grade || currentGrade}
-                parentName="Mrs. T. Dlamini"
-                childLearnerNumber={user?.learnerNumber || 'LRN-2026-7041'}
-                preferredLanguage={currentLanguage}
-              />
+              user && (user.role === 'parent' || user.role === 'master_admin') ? (
+                <ParentDashboard
+                  currentGrade={user.grade || currentGrade}
+                  parentName={user.fullName}
+                  childLearnerNumber={user.learnerNumber}
+                  preferredLanguage={currentLanguage}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Parent portal access is restricted. Sign in with an authorised parent or guardian account.
+                </div>
+              )
             )}
 
             {/* TAB 8: PRINCIPAL EXECUTIVE DASHBOARD */}
             {activeTab === 'principal-portal' && (
-              <PrincipalDashboard
-                schoolName="Johannesburg STEM Academy"
-                principalName="Dr. M. Sithole (Principal)"
-                currentTerm={1}
-              />
+              user && (user.role === 'principal' || user.role === 'master_admin') ? (
+                <PrincipalDashboard
+                  schoolName={user.schoolName}
+                  principalName={user.fullName}
+                  currentTerm={user.academicTerm}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Principal dashboard access is restricted. Sign in with an authorised principal account.
+                </div>
+              )
             )}
 
             {/* TAB 9: MASTER ADMIN CONSOLE */}
             {activeTab === 'master-admin' && (
-              <MasterAdminPortal
-                masterAdminEmail="nthabiso019@gmail.com"
-                onSwitchPreviewRole={(role) => {
-                  if (role === 'learner') setActiveTab('curriculum');
-                  if (role === 'teacher') setActiveTab('classroom');
-                  if (role === 'parent') setActiveTab('parent-portal');
-                  if (role === 'principal') setActiveTab('principal-portal');
-                }}
-              />
+              user?.role === 'master_admin' ? (
+                <MasterAdminPortal
+                  masterAdminEmail={user.email}
+                  onSwitchPreviewRole={(role) => {
+                    if (role === 'learner') setActiveTab('curriculum');
+                    if (role === 'teacher') setActiveTab('classroom');
+                    if (role === 'parent') setActiveTab('parent-portal');
+                    if (role === 'principal') setActiveTab('principal-portal');
+                  }}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-900">
+                  Master administration is restricted to an authenticated master administrator.
+                </div>
+              )
             )}
 
             {/* TAB 10: CAPSTONE PORTFOLIO */}
