@@ -166,13 +166,14 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     preferredLanguage = 'zu',
     parentGuardianEmail,
     parentGuardianPhone,
+    parentConsent,
   } = req.body;
 
-  if (!fullName || fullName.trim().length < 2) {
+  if (typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 100) {
     return res.status(400).json({ error: 'Please enter your full name (at least 2 characters).' });
   }
 
-  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!cleanEmail || !emailRegex.test(cleanEmail)) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
@@ -192,7 +193,7 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   }
   // POPIA & Child Safety Requirement: Under Grade 8 (< 8) requires parent/guardian contact
   if (numGrade < 8) {
-    if (!parentGuardianEmail || !emailRegex.test(parentGuardianEmail.trim())) {
+    if (typeof parentGuardianEmail !== 'string' || !emailRegex.test(parentGuardianEmail.trim()) || parentConsent !== true) {
       return res.status(400).json({
         error: 'Learners in Grade 4 to 7 require a valid Parent / Guardian email for POPIA digital safety compliance.',
       });
