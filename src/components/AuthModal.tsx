@@ -166,6 +166,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           preferredLanguage,
           parentGuardianEmail: isUnderGrade8 ? parentEmail : undefined,
           parentGuardianPhone: isUnderGrade8 ? parentPhone : undefined,
+          parentConsent: isUnderGrade8 ? parentConsent : undefined,
         }),
       });
 
