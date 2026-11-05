@@ -157,26 +157,32 @@ export default function App() {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
       .then(async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          if (!cancelled) {
+            setUser(null);
+            setSessionToken('');
+            try {
+              localStorage.removeItem('fundai_user');
+              localStorage.removeItem('fundai_session_token');
+            } catch (error) {
+              console.warn('Could not clear expired session:', error);
+            }
+          }
+          return null;
+        }
         if (!response.ok) {
-          throw new Error('Session is no longer valid.');
+          throw new Error(`Session validation failed with status ${response.status}.`);
         }
         return response.json();
       })
       .then((data) => {
-        if (!cancelled && data.success && data.user) {
+        if (!cancelled && data?.success && data.user) {
           setUser(data.user);
         }
       })
-      .catch(() => {
-        if (cancelled) return;
-        setUser(null);
-        setSessionToken('');
-        try {
-          localStorage.removeItem('fundai_user');
-          localStorage.removeItem('fundai_session_token');
-        } catch (error) {
-          console.warn('Could not clear expired session:', error);
-        }
+      .catch((error) => {
+        // Keep the cached session during temporary network outages.
+        console.warn('Could not validate session while offline:', error);
       });
 
     return () => {
