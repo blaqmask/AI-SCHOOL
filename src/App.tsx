@@ -51,8 +51,9 @@ export default function App() {
   // Authentication & User State
   const [user, setUser] = useState<UserAccount | null>(() => {
     try {
+      const savedToken = localStorage.getItem('fundai_session_token');
       const savedUser = localStorage.getItem('fundai_user');
-      if (savedUser) {
+      if (savedToken && savedUser) {
         return JSON.parse(savedUser);
       }
       return null;
@@ -143,6 +144,45 @@ export default function App() {
       console.warn(e);
     }
   }, [projects]);
+
+  // Validate persisted sessions with the server before trusting cached account data.
+  useEffect(() => {
+    if (!sessionToken) {
+      setUser(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Session is no longer valid.');
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled && data.success && data.user) {
+          setUser(data.user);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUser(null);
+        setSessionToken('');
+        try {
+          localStorage.removeItem('fundai_user');
+          localStorage.removeItem('fundai_session_token');
+        } catch (error) {
+          console.warn('Could not clear expired session:', error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionToken]);
 
   // Online / Offline window events
   useEffect(() => {
