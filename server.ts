@@ -148,7 +148,7 @@ function saveUsers(users: Record<string, StoredUser>) {
 const usersDb = loadUsers();
 
 function sanitizeUser(user: StoredUser) {
-  const { passwordHash, salt, resetCode, ...safeUser } = user;
+  const { passwordHash, salt, resetCode, sessionToken, ...safeUser } = user;
   return safeUser;
 }
 
