@@ -134,8 +134,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (password.length < 6) {
-      setErrorMsg('Password must be at least 6 characters long.');
+    if (password.length < 10) {
+      setErrorMsg('Password must be at least 10 characters long.');
       return;
     }
 
@@ -166,6 +166,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           preferredLanguage,
           parentGuardianEmail: isUnderGrade8 ? parentEmail : undefined,
           parentGuardianPhone: isUnderGrade8 ? parentPhone : undefined,
+          parentConsent: isUnderGrade8 ? parentConsent : undefined,
         }),
       });
 
@@ -198,10 +199,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
-      setRecoveryNotice(data.message);
-      if (data.verificationCode) {
-        setResetCode(data.verificationCode);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Password recovery is unavailable.');
       }
+      setRecoveryNotice(data.message || 'Check your registered recovery channel.');
       setForgotStep('verify');
     } catch (err: any) {
       setErrorMsg(err.message || 'Could not request reset code.');
@@ -235,12 +236,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const fillDemoAccount = () => {
-    setEmail('sipho@fundai.ac.za');
-    setPassword('Fundai2026!');
-    setErrorMsg(null);
   };
 
   return (
@@ -325,25 +320,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {/* 1. LOGIN FORM */}
           {mode === 'login' && (
             <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
-              {/* Quick Demo Fill Button */}
-              <div className="p-3 bg-indigo-50/80 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800/80 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-indigo-900 dark:text-indigo-200 block">
-                    Quick Evaluator Access:
-                  </span>
-                  <span className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Sipho Ndlovu · Grade 7 Cadet
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={fillDemoAccount}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-sm text-xs transition-colors"
-                >
-                  Fill Demo Details
-                </button>
-              </div>
-
               {/* Email */}
               <div className="space-y-1.5">
                 <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -595,7 +571,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min 6 characters"
+                      placeholder="At least 10 characters"
                       className="w-full px-3.5 py-2.5 pr-10 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                     <button

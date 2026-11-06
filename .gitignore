@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local account database contains private learner data and credentials.
+users_db.json

@@ -14,9 +14,15 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
-const ai = new GoogleGenAI();
+function getAIClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured.');
+  }
+  return new GoogleGenAI({ apiKey });
+}
 
 async function callGeminiSafe(
   systemInstruction: string,
@@ -27,7 +33,7 @@ async function callGeminiSafe(
     return fallbackText;
   }
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: promptText,
       config: {
@@ -72,6 +78,7 @@ interface StoredUser {
   createdAt: string;
   sessionToken?: string;
   resetCode?: string;
+  passwordHashIterations?: number;
 }
 
 // Initial demo user
@@ -88,8 +95,14 @@ const DEFAULT_AVATAR = {
   auraEffect: 'azure-cyber',
 };
 
-function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+const PASSWORD_HASH_ITERATIONS = 210_000;
+
+function hashPassword(
+  password: string,
+  salt: string,
+  iterations = PASSWORD_HASH_ITERATIONS
+): string {
+  return crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex');
 }
 
 function loadUsers(): Record<string, StoredUser> {
@@ -103,83 +116,21 @@ function loadUsers(): Record<string, StoredUser> {
     console.warn('Could not load users file, initializing new store:', err);
   }
 
-  // Seed demo user: Sipho Ndlovu
-  const demoSalt = crypto.randomBytes(16).toString('hex');
-  const demoHash = hashPassword('Fundai2026!', demoSalt);
-
-  // Seed Master Admin: nthabiso019@gmail.com
-  const adminSalt = crypto.randomBytes(16).toString('hex');
-  const adminHash = hashPassword('FundaiMaster2026!', adminSalt);
-
-  if (!existingUsers['sipho@fundai.ac.za']) {
-    existingUsers['sipho@fundai.ac.za'] = {
-      id: 'usr-demo-01',
-      fullName: 'Sipho Ndlovu',
-      email: 'sipho@fundai.ac.za',
-      passwordHash: demoHash,
-      salt: demoSalt,
-      grade: 7,
-      role: 'learner',
-      learnerNumber: 'LRN-2026-7041',
-      isGradeLocked: true,
-      gradeLockDate: '2026-01-14',
-      gradeLockExpiryDate: '2026-12-10',
-      academicTerm: 1,
-      dailyMinutesTarget: 45,
-      dailyMinutesCompleted: 38,
-      studyStreakDays: 14,
-      schoolName: 'Johannesburg STEM Academy',
-      province: 'Gauteng',
-      preferredLanguage: 'zu',
-      parentGuardianEmail: 'parent.ndlovu@gmail.com',
-      parentGuardianPhone: '+27 82 555 1234',
-      avatar: DEFAULT_AVATAR,
-      earnedBadgeIds: [
-        'badge-prompt-master',
-        'badge-data-detective',
-        'badge-neural-architect',
-        'badge-fact-checker',
-        'badge-ubuntu-ethics',
-        'badge-multilingual-hero',
-      ],
-      totalXP: 2100,
-      completedModuleIds: ['m01', 'm02', 'm03', 'm07', 'm11', 'm16'],
-      createdAt: '2026-10-01T08:00:00Z',
-      sessionToken: 'token-demo-sipho',
-    };
+  // Remove accounts created by the old hard-coded demo seeding logic.
+  // Keep every other account intact.
+  if (existingUsers['sipho@fundai.ac.za']?.id === 'usr-demo-01') {
+    delete existingUsers['sipho@fundai.ac.za'];
+  }
+  if (existingUsers['nthabiso019@gmail.com']?.id === 'usr-master-admin-01') {
+    delete existingUsers['nthabiso019@gmail.com'];
   }
 
-  if (!existingUsers['nthabiso019@gmail.com']) {
-    existingUsers['nthabiso019@gmail.com'] = {
-      id: 'usr-master-admin-01',
-      fullName: 'Nthabiso (Master Admin)',
-      email: 'nthabiso019@gmail.com',
-      passwordHash: adminHash,
-      salt: adminSalt,
-      grade: 12,
-      role: 'master_admin',
-      learnerNumber: 'ADM-MASTER-001',
-      isGradeLocked: false,
-      gradeLockDate: '2026-01-01',
-      gradeLockExpiryDate: '2026-12-31',
-      academicTerm: 1,
-      dailyMinutesTarget: 45,
-      dailyMinutesCompleted: 45,
-      studyStreakDays: 45,
-      schoolName: 'FUNDAI Master Administration',
-      province: 'Gauteng',
-      preferredLanguage: 'en',
-      avatar: {
-        ...DEFAULT_AVATAR,
-        clothing: 'cyber-hoodie',
-        auraEffect: 'solar-gold',
-      },
-      earnedBadgeIds: ['badge-prompt-master', 'badge-data-detective', 'badge-neural-architect'],
-      totalXP: 9999,
-      completedModuleIds: ['m01', 'm02', 'm03'],
-      createdAt: '2026-01-01T00:00:00Z',
-      sessionToken: 'token-master-admin-nthabiso',
-    };
+  // Sessions issued by the old build may have been exposed in the committed
+  // database. Invalidate legacy sessions once; successful login upgrades hashes.
+  for (const user of Object.values(existingUsers)) {
+    if (!user.passwordHashIterations) {
+      delete user.sessionToken;
+    }
   }
 
   saveUsers(existingUsers);
@@ -197,7 +148,7 @@ function saveUsers(users: Record<string, StoredUser>) {
 const usersDb = loadUsers();
 
 function sanitizeUser(user: StoredUser) {
-  const { passwordHash, salt, resetCode, ...safeUser } = user;
+  const { passwordHash, salt, resetCode, sessionToken, ...safeUser } = user;
   return safeUser;
 }
 
@@ -215,13 +166,14 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     preferredLanguage = 'zu',
     parentGuardianEmail,
     parentGuardianPhone,
+    parentConsent,
   } = req.body;
 
-  if (!fullName || fullName.trim().length < 2) {
+  if (typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 100) {
     return res.status(400).json({ error: 'Please enter your full name (at least 2 characters).' });
   }
 
-  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!cleanEmail || !emailRegex.test(cleanEmail)) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
@@ -231,14 +183,17 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'An account with this email address already exists. Please log in.' });
   }
 
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  if (typeof password !== 'string' || password.length < 10 || password.length > 128) {
+    return res.status(400).json({ error: 'Password must be between 10 and 128 characters.' });
   }
 
   const numGrade = Number(grade);
+  if (!Number.isInteger(numGrade) || numGrade < 4 || numGrade > 12) {
+    return res.status(400).json({ error: 'Grade must be a whole number from 4 to 12.' });
+  }
   // POPIA & Child Safety Requirement: Under Grade 8 (< 8) requires parent/guardian contact
   if (numGrade < 8) {
-    if (!parentGuardianEmail || !emailRegex.test(parentGuardianEmail.trim())) {
+    if (typeof parentGuardianEmail !== 'string' || !emailRegex.test(parentGuardianEmail.trim()) || parentConsent !== true) {
       return res.status(400).json({
         error: 'Learners in Grade 4 to 7 require a valid Parent / Guardian email for POPIA digital safety compliance.',
       });
@@ -256,6 +211,7 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
     fullName: fullName.trim(),
     email: cleanEmail,
     passwordHash,
+    passwordHashIterations: PASSWORD_HASH_ITERATIONS,
     salt,
     grade: numGrade,
     role: 'learner',
@@ -294,15 +250,19 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
 
 // Update Daily Study Time Endpoint
 app.post('/api/user/study-time', (req: Request, res: Response) => {
-  const { email, minutesAdded = 1 } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-  const user = usersDb[cleanEmail];
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\\s+/i, '').trim();
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
+  const minutesAdded = Number(req.body.minutesAdded ?? 1);
 
   if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(401).json({ error: 'Not authenticated.' });
+  }
+  if (!Number.isFinite(minutesAdded) || minutesAdded <= 0 || minutesAdded > 240) {
+    return res.status(400).json({ error: 'Study time must be between 1 and 240 minutes.' });
   }
 
-  user.dailyMinutesCompleted = (user.dailyMinutesCompleted || 0) + Number(minutesAdded);
+  user.dailyMinutesCompleted = (user.dailyMinutesCompleted || 0) + minutesAdded;
   if (user.dailyMinutesCompleted >= user.dailyMinutesTarget && !user.earnedBadgeIds.includes('badge-prompt-master')) {
     user.totalXP += 100;
   }
@@ -319,8 +279,8 @@ app.post('/api/user/study-time', (req: Request, res: Response) => {
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { email, password, rememberMe = true } = req.body;
 
-  const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail || !password) {
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!cleanEmail || typeof password !== 'string' || !password) {
     return res.status(400).json({ error: 'Please enter both your email address and password.' });
   }
 
@@ -329,9 +289,22 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'No account found with this email. Please check spelling or register.' });
   }
 
-  const inputHash = hashPassword(password, user.salt);
-  if (inputHash !== user.passwordHash) {
+  const storedIterations = user.passwordHashIterations ?? 1000;
+  const inputHash = hashPassword(password, user.salt, storedIterations);
+  const expectedHash = Buffer.from(user.passwordHash, 'hex');
+  const actualHash = Buffer.from(inputHash, 'hex');
+  if (
+    expectedHash.length !== actualHash.length ||
+    !crypto.timingSafeEqual(expectedHash, actualHash)
+  ) {
     return res.status(401).json({ error: 'Incorrect password. Please try again or use Forgot Password.' });
+  }
+
+  // Upgrade legacy password hashes after a successful login.
+  if (storedIterations < PASSWORD_HASH_ITERATIONS) {
+    user.salt = crypto.randomBytes(16).toString('hex');
+    user.passwordHash = hashPassword(password, user.salt);
+    user.passwordHashIterations = PASSWORD_HASH_ITERATIONS;
   }
 
   const sessionToken = crypto.randomBytes(32).toString('hex');
@@ -379,71 +352,28 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
-// Forgot Password Flow
-app.post('/api/auth/forgot-password', (req: Request, res: Response) => {
-  const { email } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-
-  const user = usersDb[cleanEmail];
-  if (!user) {
-    // For security, still return success message or simulated notice
-    return res.json({
-      success: true,
-      message: 'If an account exists with this email, a verification code has been dispatched.',
-      verificationCode: '829401', // Helpful for local/classroom prototype
-    });
-  }
-
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  user.resetCode = code;
-  saveUsers(usersDb);
-
-  res.json({
-    success: true,
-    message: `Verification code generated for ${user.fullName}. In this development preview, your reset code is: ${code}`,
-    verificationCode: code,
+// Password recovery is intentionally disabled until a verified email/SMS
+// delivery provider is configured. Never return reset codes from this API.
+app.post('/api/auth/forgot-password', (_req: Request, res: Response) => {
+  res.status(503).json({
+    success: false,
+    error: 'Password recovery is not configured yet. Please contact your school administrator.',
   });
 });
 
-// Reset Password Flow
-app.post('/api/auth/reset-password', (req: Request, res: Response) => {
-  const { email, code, newPassword } = req.body;
-  const cleanEmail = (email || '').trim().toLowerCase();
-
-  if (!cleanEmail || !code || !newPassword) {
-    return res.status(400).json({ error: 'Please provide email, verification code, and new password.' });
-  }
-
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters.' });
-  }
-
-  const user = usersDb[cleanEmail];
-  if (!user || user.resetCode !== code.trim()) {
-    return res.status(400).json({ error: 'Invalid verification code or email. Please check and try again.' });
-  }
-
-  user.salt = crypto.randomBytes(16).toString('hex');
-  user.passwordHash = hashPassword(newPassword, user.salt);
-  delete user.resetCode;
-  saveUsers(usersDb);
-
-  res.json({ success: true, message: 'Your password has been successfully reset! You can now log in.' });
+app.post('/api/auth/reset-password', (_req: Request, res: Response) => {
+  res.status(503).json({
+    success: false,
+    error: 'Password recovery is not configured yet. Please contact your school administrator.',
+  });
 });
 
 // Update Anime Avatar Endpoint
 app.put('/api/user/avatar', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '').trim();
-  const { avatar, email } = req.body;
-
-  let user: StoredUser | undefined;
-  if (token) {
-    user = Object.values(usersDb).find((u) => u.sessionToken === token);
-  }
-  if (!user && email) {
-    user = usersDb[email.toLowerCase()];
-  }
+  const { avatar } = req.body;
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated or user not found.' });
@@ -459,15 +389,8 @@ app.put('/api/user/avatar', (req: Request, res: Response) => {
 app.post('/api/user/badges/unlock', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '').trim();
-  const { badgeId, xp = 250, email } = req.body;
-
-  let user: StoredUser | undefined;
-  if (token) {
-    user = Object.values(usersDb).find((u) => u.sessionToken === token);
-  }
-  if (!user && email) {
-    user = usersDb[email.toLowerCase()];
-  }
+  const { badgeId, xp = 250 } = req.body;
+  const user = Object.values(usersDb).find((candidate) => candidate.sessionToken === token);
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated.' });
@@ -613,7 +536,7 @@ Return a JSON object with:
   }
 
   try {
-    const raw = await ai.models.generateContent({
+    const raw = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: userQuery,
       config: {
@@ -668,7 +591,7 @@ Return JSON:
       res.json(fallback);
       return;
     }
-    const response = await ai.models.generateContent({
+    const response = await getAIClient().models.generateContent({
       model: 'gemini-3.8-flash',
       contents: `Statement: "${statement}". Context: "${context}"`,
       config: {

@@ -38,38 +38,6 @@ import { AnimeAvatarStudioModal } from './components/AnimeAvatarStudioModal';
 import { DEFAULT_ANIME_AVATAR } from './components/AnimeAvatarRenderer';
 import { Bot, Sparkles, BookOpen, Wifi, WifiOff } from 'lucide-react';
 
-const INITIAL_DEMO_USER: UserAccount = {
-  id: 'usr-demo-sipho',
-  fullName: 'Sipho Ndlovu',
-  email: 'sipho@fundai.ac.za',
-  role: 'learner',
-  grade: 7,
-  learnerNumber: 'LRN-2026-7041',
-  isGradeLocked: true,
-  gradeLockDate: '2026-01-14',
-  gradeLockExpiryDate: '2026-12-10',
-  academicTerm: 1,
-  dailyMinutesTarget: 45,
-  dailyMinutesCompleted: 28,
-  lastStudyDate: '2026-02-15',
-  studyStreakDays: 14,
-  schoolName: 'Johannesburg STEM Academy',
-  province: 'Gauteng',
-  preferredLanguage: 'zu',
-  parentGuardianEmail: 'parent.ndlovu@gmail.com',
-  parentGuardianPhone: '+27 82 555 1234',
-  avatar: DEFAULT_ANIME_AVATAR,
-  earnedBadgeIds: [
-    'badge-prompt-master',
-    'badge-data-detective',
-    'badge-ubuntu-ethics',
-    'badge-multilingual-hero',
-  ],
-  totalXP: 1450,
-  completedModuleIds: ['m01', 'm02'],
-  createdAt: '2026-02-15T08:00:00.000Z',
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('curriculum');
   const [currentGrade, setCurrentGrade] = useState<GradeLevel>(7);
@@ -83,21 +51,26 @@ export default function App() {
   // Authentication & User State
   const [user, setUser] = useState<UserAccount | null>(() => {
     try {
+      const savedToken = localStorage.getItem('fundai_session_token');
       const savedUser = localStorage.getItem('fundai_user');
-      if (savedUser) {
-        return JSON.parse(savedUser);
+      if (savedToken && savedUser) {
+        const cachedUser = JSON.parse(savedUser);
+        if (cachedUser && typeof cachedUser === 'object') {
+          delete cachedUser.sessionToken;
+        }
+        return cachedUser;
       }
-      return INITIAL_DEMO_USER;
+      return null;
     } catch {
-      return INITIAL_DEMO_USER;
+      return null;
     }
   });
 
   const [sessionToken, setSessionToken] = useState<string>(() => {
     try {
-      return localStorage.getItem('fundai_session_token') || 'token-demo-sipho';
+      return localStorage.getItem('fundai_session_token') || '';
     } catch {
-      return 'token-demo-sipho';
+      return '';
     }
   });
 
@@ -176,6 +149,51 @@ export default function App() {
     }
   }, [projects]);
 
+  // Validate persisted sessions with the server before trusting cached account data.
+  useEffect(() => {
+    if (!sessionToken) {
+      setUser(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then(async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          if (!cancelled) {
+            setUser(null);
+            setSessionToken('');
+            try {
+              localStorage.removeItem('fundai_user');
+              localStorage.removeItem('fundai_session_token');
+            } catch (error) {
+              console.warn('Could not clear expired session:', error);
+            }
+          }
+          return null;
+        }
+        if (!response.ok) {
+          throw new Error(`Session validation failed with status ${response.status}.`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled && data?.success && data.user) {
+          setUser(data.user);
+        }
+      })
+      .catch((error) => {
+        // Keep the cached session during temporary network outages.
+        console.warn('Could not validate session while offline:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionToken]);
+
   // Online / Offline window events
   useEffect(() => {
     const handleOnline = () => setIsOfflineMode(false);
@@ -213,8 +231,11 @@ export default function App() {
     try {
       await fetch('/api/user/study-time', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, minutesAdded: minutes }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ minutesAdded: minutes }),
       });
     } catch (err) {
       // Offline fallback
@@ -389,6 +410,10 @@ export default function App() {
         }}
         onLogout={handleLogout}
         onSelectRolePreview={(role) => {
+          if (!user || (user.role !== role && user.role !== 'master_admin')) {
+            setIsAuthModalOpen(true);
+            return;
+          }
           if (role === 'learner') setActiveTab('curriculum');
           if (role === 'teacher') setActiveTab('classroom');
           if (role === 'parent') setActiveTab('parent-portal');
@@ -533,43 +558,67 @@ export default function App() {
 
             {/* TAB 6: TEACHER CLASSROOM DASHBOARD */}
             {activeTab === 'classroom' && (
-              <TeacherDashboard
-                currentGrade={user?.grade || currentGrade}
-                teacherName="Mrs. N. Khumalo (HOD Science & Technology)"
-                assignedSubject="Grade 7 · Coding & Mathematics"
-              />
+              user && (user.role === 'teacher' || user.role === 'master_admin') ? (
+                <TeacherDashboard
+                  currentGrade={user.grade || currentGrade}
+                  teacherName={user.fullName}
+                  assignedSubject="Assigned school subjects"
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Teacher dashboard access is restricted. Sign in with an authorised teacher account.
+                </div>
+              )
             )}
 
             {/* TAB 7: PARENT & GUARDIAN PORTAL */}
             {activeTab === 'parent-portal' && (
-              <ParentDashboard
-                currentGrade={user?.grade || currentGrade}
-                parentName="Mrs. T. Dlamini"
-                childLearnerNumber={user?.learnerNumber || 'LRN-2026-7041'}
-                preferredLanguage={currentLanguage}
-              />
+              user && (user.role === 'parent' || user.role === 'master_admin') ? (
+                <ParentDashboard
+                  currentGrade={user.grade || currentGrade}
+                  parentName={user.fullName}
+                  childLearnerNumber={user.learnerNumber}
+                  preferredLanguage={currentLanguage}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Parent portal access is restricted. Sign in with an authorised parent or guardian account.
+                </div>
+              )
             )}
 
             {/* TAB 8: PRINCIPAL EXECUTIVE DASHBOARD */}
             {activeTab === 'principal-portal' && (
-              <PrincipalDashboard
-                schoolName="Johannesburg STEM Academy"
-                principalName="Dr. M. Sithole (Principal)"
-                currentTerm={1}
-              />
+              user && (user.role === 'principal' || user.role === 'master_admin') ? (
+                <PrincipalDashboard
+                  schoolName={user.schoolName}
+                  principalName={user.fullName}
+                  currentTerm={user.academicTerm}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                  Principal dashboard access is restricted. Sign in with an authorised principal account.
+                </div>
+              )
             )}
 
             {/* TAB 9: MASTER ADMIN CONSOLE */}
             {activeTab === 'master-admin' && (
-              <MasterAdminPortal
-                masterAdminEmail="nthabiso019@gmail.com"
-                onSwitchPreviewRole={(role) => {
-                  if (role === 'learner') setActiveTab('curriculum');
-                  if (role === 'teacher') setActiveTab('classroom');
-                  if (role === 'parent') setActiveTab('parent-portal');
-                  if (role === 'principal') setActiveTab('principal-portal');
-                }}
-              />
+              user?.role === 'master_admin' ? (
+                <MasterAdminPortal
+                  masterAdminEmail={user.email}
+                  onSwitchPreviewRole={(role) => {
+                    if (role === 'learner') setActiveTab('curriculum');
+                    if (role === 'teacher') setActiveTab('classroom');
+                    if (role === 'parent') setActiveTab('parent-portal');
+                    if (role === 'principal') setActiveTab('principal-portal');
+                  }}
+                />
+              ) : (
+                <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-900">
+                  Master administration is restricted to an authenticated master administrator.
+                </div>
+              )
             )}
 
             {/* TAB 10: CAPSTONE PORTFOLIO */}
